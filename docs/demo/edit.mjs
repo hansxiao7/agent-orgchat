@@ -29,9 +29,9 @@ spec.beats.forEach((b, i) => {
     html,body{margin:0;width:${W}px;height:${CH}px;background:#16181d;overflow:hidden}
     body{display:flex;align-items:center;gap:16px;padding:0 24px;box-sizing:border-box;border-top:1px solid #2a2d35;
       font:500 22px/1 -apple-system,"SF Pro Text","Helvetica Neue",sans-serif;color:#e8e8e3}
-    .n{font-weight:700;color:#16181d;background:#7fd1b2;border-radius:999px;min-width:30px;height:30px;display:grid;place-items:center;font-size:17px}
+    .n{font-weight:700;color:#16181d;background:#7fd1b2;border-radius:999px;min-width:30px;height:30px;padding:0 8px;box-sizing:border-box;display:grid;place-items:center;font-size:17px}
     .of{color:#7d808a;font-size:16px;margin-left:auto}
-  </style><body><span class="n">${i + 1}</span><span>${esc(b.caption)}</span><span class="of">${esc(spec.tag || 'orgchat')}</span></body>`;
+  </style><body><span class="n">${spec.prefix || ''}${i + 1}</span><span>${esc(b.caption)}</span><span class="of">${esc(spec.tag || 'orgchat')}</span></body>`;
   fs.writeFileSync(path.join(tmp, `c${i}.html`), html);
   execFileSync(CHROME, ['--headless=new', '--disable-gpu', '--hide-scrollbars', `--window-size=${W},${CH}`, `--screenshot=${path.join(tmp, `c${i}.png`)}`, `file://${path.join(tmp, `c${i}.html`)}`], { stdio: 'ignore' });
 });

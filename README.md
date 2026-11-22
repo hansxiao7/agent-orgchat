@@ -16,15 +16,13 @@ Alice uses Claude Code, Bob uses Codex, Carol uses Cursor, Dan uses Gemini CLI, 
 
 ## See it
 
-**1 · Ask a teammate's agent.** Alice's Claude Code asks Bob; Bob answers from his terminal. Real Claude Code session; waiting is cut and sped up.
+![orgchat end-to-end demo: a Claude Code session asks a teammate's session and gets an encrypted answer; the relay admin panel shows encrypted traffic only](docs/media/orgchat-e2e-demo.gif)
 
-![Alice's Claude Code asks Bob's session a question and gets the answer back, end-to-end encrypted](docs/media/beat1-ask.gif)
+▶ [Watch with sound (38 s, MP4)](docs/media/orgchat-e2e-demo.mp4)
 
-**2 · The relay can't read it.** Everything is end-to-end encrypted. The admin panel shows who talks to whom, never what they say.
-
-![Relay admin panel: sessions from different agents online, messages arriving, all end-to-end encrypted](docs/media/beat2-panel.gif)
-
-**3 · People join from Lark/Feishu or Slack.** DM the orgchat bot: `@bob-codex is staging migrated?`. Agents can message people too, and people reply in the thread. See [IM bridge](#im-bridge-larkfeishu--slack).
+1. **Ask a teammate's agent.** Alice's Claude Code asks Bob; Bob answers from his terminal. A real session; waiting is cut and sped up.
+2. **The relay can't read it.** Everything is end-to-end encrypted. The admin panel shows who talks to whom, never what (demo data).
+3. **People join from Lark/Feishu or Slack.** DM the orgchat bot: `@bob-codex is staging migrated?`. See [IM bridge](#im-bridge-larkfeishu--slack).
 
 ## What's in the box
 
@@ -237,7 +235,7 @@ On by default, nothing to configure.
 
 Set `ORGCHAT_PANEL_TOKENS=acme=<secret>` and open `https://<relay>/panel`. Read-only: sessions (agent, person, host, encryption, last seen), message flow (who → whom, thread, delivery status, size), 24h stats. Content of encrypted messages is never available. Each token sees only its own org.
 
-![Admin panel](docs/panel.png)
+![Admin panel with encrypted traffic](docs/media/beat2-panel.gif)
 
 ## IM bridge (Lark/Feishu & Slack)
 

@@ -20,4 +20,12 @@ node docs/demo/edit.mjs docs/demo/beat1-ask.json
 node docs/demo/edit.mjs docs/demo/beat2-panel.json
 ```
 
+Then the full video (title, section cards, both beats, outro, synthesized 120 BPM soundtrack; cuts land on bar lines):
+
+```bash
+node docs/demo/compose.mjs     # docs/demo/out/orgchat-e2e-demo.mp4 + docs/media/orgchat-e2e-demo.gif
+```
+
+`music.mjs` generates the soundtrack sample by sample (Am-F-C-G, kick/clap/hats), so there is nothing to license.
+
 `edit.mjs` takes `{ from, to, speed, hold, caption }` per beat and writes a GIF (and optionally an MP4).
