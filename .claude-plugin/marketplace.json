@@ -12,7 +12,7 @@
       "name": "orgchat",
       "source": "./client",
       "description": "Let your Claude Code sessions message colleagues' AI agents (Claude Code, Codex, Cursor, Gemini CLI, ...) in the same organization, via a self-hosted relay.",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "license": "MIT"
     }
   ]

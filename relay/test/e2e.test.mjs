@@ -5,15 +5,24 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { createRelay, configFromEnv } from '../src/relay.mjs';
 
+// Each test client is its own "device" with its own identity key, outside the real home dir.
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'orgchat-test-'));
+let deviceSeq = 0;
+const deviceEnv = () => {
+  const dir = path.join(TMP, `device${++deviceSeq}`);
+  return { ORGCHAT_IDENTITY_FILE: path.join(dir, 'identity.json'), ORGCHAT_KNOWN_KEYS_FILE: path.join(dir, 'known_keys.json') };
+};
 const PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/bin/orgchat-mcp.mjs');
 
 class McpClient {
   constructor(env) {
     this.proc = spawn(process.execPath, [PLUGIN], {
-      env: { ...process.env, ORGCHAT_CONFIG: '/nonexistent', ...env },
+      env: { ...process.env, ORGCHAT_CONFIG: '/nonexistent', ...deviceEnv(), ...env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.nextId = 1;
@@ -79,7 +88,7 @@ const clients = [];
 const client = (env) => { const c = new McpClient({ ORGCHAT_RELAY_URL: url, ...env }); clients.push(c); return c; };
 
 before(async () => {
-  const cfg = { ...configFromEnv({ ORGCHAT_TOKENS: 'acme=acme-secret,other=other-secret' }), log: () => {} };
+  const cfg = { ...configFromEnv({ ORGCHAT_TOKENS: 'acme=acme-secret,other=other-secret', ORGCHAT_DB: ':memory:' }), log: () => {} };
   relay = createRelay(cfg);
   const port = await relay.listen(0, '127.0.0.1');
   url = `ws://127.0.0.1:${port}`;
@@ -88,6 +97,7 @@ before(async () => {
 after(async () => {
   for (const c of clients) c.close();
   await relay.close();
+  fs.rmSync(TMP, { recursive: true, force: true });
 });
 
 test('initialize advertises the channel capability and tools', async () => {
@@ -120,6 +130,14 @@ test('two sessions in one org can discover each other and exchange messages', as
   assert.equal(n.params.meta.from_user, 'alice');
   assert.equal(n.params.meta.from_session, a.session.sid);
   assert.equal(n.params.meta.thread_id, 't1');
+  assert.equal(n.params.meta.encrypted, 'true');
+  assert.equal(n.params.meta.sender_key, 'new');
+  assert.match(n.params.meta.sender_fingerprint, /^[0-9a-f]{4}(-[0-9a-f]{4}){4}$/);
+  // The relay only ever stored ciphertext, and dropped it after delivery.
+  const stored = relay.store.messagesForOrg('acme', { limit: 1 })[0];
+  assert.equal(stored.e2e, 1);
+  assert.equal(stored.body, null);
+  assert.equal(stored.status, 'acked');
   for (const k of Object.keys(n.params.meta)) assert.match(k, /^[A-Za-z0-9_]+$/);
 
   const inbox = await bob.tool('read_inbox');
@@ -129,11 +147,14 @@ test('two sessions in one org can discover each other and exchange messages', as
   await bob.tool('send', { to: n.params.meta.from_session, text: '8080', thread: 't1' });
   const back = await alice.nextNotification('notifications/claude/channel');
   assert.equal(back.params.content, '8080');
+  assert.equal(back.params.meta.encrypted, 'true');
   assert.equal(back.params.meta.from_session, b.session.sid);
 
   const byUser = await alice.tool('send', { to: 'user:bob', text: 'ping' });
   assert.equal(byUser.data.sent.length, 1);
-  await bob.nextNotification('notifications/claude/channel');
+  assert.equal(byUser.data.sent[0].e2e, true);
+  const second = await bob.nextNotification('notifications/claude/channel');
+  assert.equal(second.params.meta.sender_key, 'known');
 });
 
 test('sessions in different orgs cannot see or reach each other', async () => {
@@ -217,7 +238,7 @@ test('different agents talk to each other: Codex pulls, Claude Code gets pushed'
 
 test('CLI can list peers and send with --wait', async () => {
   const cli = path.resolve(path.dirname(PLUGIN), 'orgchat.mjs');
-  const env = { ...process.env, ORGCHAT_CONFIG: '/nonexistent', ORGCHAT_RELAY_URL: url, ORGCHAT_TOKEN: 'acme-secret', ORGCHAT_USER: 'gina' };
+  const env = { ...process.env, ...deviceEnv(), ORGCHAT_CONFIG: '/nonexistent', ORGCHAT_RELAY_URL: url, ORGCHAT_TOKEN: 'acme-secret', ORGCHAT_USER: 'gina' };
   const run = (args) => new Promise((resolve) => execFile(process.execPath, [cli, ...args], { env, timeout: 15000 }, (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr })));
 
   const gemini = client({ ORGCHAT_TOKEN: 'acme-secret', ORGCHAT_USER: 'hank', ORGCHAT_NAME: 'hank-gemini' });
@@ -239,4 +260,29 @@ test('CLI can list peers and send with --wait', async () => {
 
   const bad = await run(['send']);
   assert.equal(bad.code, 1);
+});
+
+test('encrypted clients still interoperate with a client that has encryption off', async () => {
+  const plain = client({ ORGCHAT_TOKEN: 'acme-secret', ORGCHAT_USER: 'ivan', ORGCHAT_NAME: 'ivan-plain', ORGCHAT_E2E: '0' });
+  const strict = client({ ORGCHAT_TOKEN: 'acme-secret', ORGCHAT_USER: 'judy', ORGCHAT_NAME: 'judy-strict', ORGCHAT_REQUIRE_E2E: '1' });
+  const normal = client({ ORGCHAT_TOKEN: 'acme-secret', ORGCHAT_USER: 'kim', ORGCHAT_NAME: 'kim-normal' });
+  await Promise.all([plain.init(), strict.init(), normal.init()]);
+  await Promise.all([plain.waitConnected(), strict.waitConnected(), normal.waitConnected()]);
+
+  const peers = (await normal.tool('list_peers')).data.peers;
+  assert.equal(peers.find((p) => p.name === 'ivan-plain').e2e, false);
+  assert.equal(peers.find((p) => p.name === 'judy-strict').e2e, true);
+
+  const sent = await normal.tool('send', { to: 'ivan-plain', text: 'hello plain' });
+  assert.equal(sent.data.sent[0].e2e, false);
+  const got = await plain.nextNotification('notifications/claude/channel');
+  assert.equal(got.params.meta.encrypted, 'false');
+
+  const refused = await strict.tool('send', { to: 'ivan-plain', text: 'secret' });
+  assert.equal(refused.isError, true);
+  assert.match(refused.data, /refusing to send unencrypted/);
+
+  await plain.tool('send', { to: 'judy-strict', text: 'plaintext to strict' });
+  const dropped = await strict.nextNotification('notifications/claude/channel');
+  assert.match(dropped.params.content, /dropped an unencrypted message/);
 });

@@ -1,13 +1,13 @@
 {
   "name": "orgchat-relay",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Relay server for orgchat: routes messages between AI agent sessions in the same organization.",
   "license": "MIT",
   "private": true,
   "type": "module",
   "main": "index.mjs",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "scripts": {
     "start": "node index.mjs",

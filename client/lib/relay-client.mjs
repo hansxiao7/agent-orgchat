@@ -6,8 +6,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { KnownKeys, decrypt, encrypt, isPublicKey, loadIdentity } from './e2e.mjs';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 const REQUEST_TIMEOUT_MS = 10_000;
 
 /** Config: environment variables override ~/.config/orgchat/config.json */
@@ -31,6 +32,9 @@ export function loadConfig({ log = () => {} } = {}) {
     user: env.ORGCHAT_USER || fromFile.user || localUser,
     name: env.ORGCHAT_NAME || fromFile.name || `${localUser}@${host}:${path.basename(projectDir)}`,
     agent: env.ORGCHAT_AGENT || fromFile.agent || '',
+    // End-to-end encryption: on by default; requireE2E refuses to send or accept plaintext.
+    e2e: (env.ORGCHAT_E2E ?? (fromFile.e2e === false ? '0' : '1')) !== '0',
+    requireE2E: (env.ORGCHAT_REQUIRE_E2E ?? (fromFile.requireE2E ? '1' : '0')) === '1',
     host,
     cwd: projectDir,
   };
@@ -77,8 +81,11 @@ function runCommand(command) {
  * incoming messages and calls onMessage(msg) for each one.
  */
 export class RelayClient {
-  constructor(config, { sid = newSessionId(), agent = 'unknown', client = `orgchat/${VERSION}`, onMessage = () => {}, onStatus = () => {}, reconnect = true } = {}) {
+  constructor(config, { sid = newSessionId(), agent = 'unknown', client = `orgchat/${VERSION}`, onMessage = () => {}, onStatus = () => {}, reconnect = true, identity, knownKeys } = {}) {
     this.config = config;
+    this.identity = config.e2e || config.requireE2E ? identity || loadIdentity() : null;
+    this.knownKeys = this.identity ? knownKeys || new KnownKeys() : null;
+    this.seen = new Set();
     this.sid = sid;
     this.agent = agent;
     this.client = client;
@@ -107,7 +114,8 @@ export class RelayClient {
     this.setState('connecting', this.lastError);
     let auth;
     try {
-      if (config.idTokenCommand) auth = { id_token: await runCommand(config.idTokenCommand) };
+      if (config.bridgeToken) auth = { bridge_token: config.bridgeToken };
+      else if (config.idTokenCommand) auth = { id_token: await runCommand(config.idTokenCommand) };
       else if (config.token) auth = { token: config.token };
       else throw new Error('No credentials. Set ORGCHAT_TOKEN or ORGCHAT_ID_TOKEN_CMD (or token / idTokenCommand in the config file).');
     } catch (err) {
@@ -129,6 +137,7 @@ export class RelayClient {
           host: config.host,
           cwd: config.cwd,
           client: this.client,
+          ...(this.identity ? { pubkey: this.identity.pub } : {}),
         },
       }));
     };
@@ -178,10 +187,15 @@ export class RelayClient {
         this.me = msg.session;
         this.setState('connected', null);
         break;
-      case 'msg':
+      case 'msg': {
         this.ws?.send(JSON.stringify({ type: 'ack', id: msg.id }));
-        this.onMessage(msg);
+        if (this.seen.has(msg.id)) break; // redelivery after a dropped ack
+        this.seen.add(msg.id);
+        if (this.seen.size > 1000) this.seen.delete(this.seen.values().next().value);
+        const m = this.open(msg);
+        if (m) this.onMessage(m);
         break;
+      }
       case 'res': {
         const p = this.pending.get(msg.req);
         if (!p) return;
@@ -194,6 +208,45 @@ export class RelayClient {
         this.lastError = msg.error;
         break;
     }
+  }
+
+  /** Decrypt / validate an incoming relay message into { id, from, to, thread, ts, text, e2e, ... }. */
+  open(msg) {
+    const base = { id: msg.id, from: msg.from, to: msg.to, thread: msg.thread, ts: msg.ts };
+    if (msg.e2e) {
+      const senderPub = msg.from?.pubkey;
+      try {
+        if (!this.identity) throw new Error('encryption is disabled on this client');
+        if (!isPublicKey(senderPub)) throw new Error('sender has no public key');
+        const { text, sentAt } = decrypt(this.identity, senderPub, msg.e2e, { fromSid: msg.from.sid, toSid: msg.to, thread: msg.thread });
+        const pin = this.knownKeys.check(msg.from.user, senderPub);
+        return { ...base, text, sentAt, e2e: true, senderKey: pin.status, senderFingerprint: pin.fingerprint, senderOtherKeys: pin.otherKeys };
+      } catch (err) {
+        return { ...base, text: `[orgchat: could not decrypt this message: ${err.message}]`, e2e: true, decryptError: err.message };
+      }
+    }
+    if (this.config.requireE2E) {
+      return { ...base, text: '[orgchat: dropped an unencrypted message because requireE2E is on]', e2e: false, decryptError: 'plaintext refused' };
+    }
+    return { ...base, text: String(msg.text ?? ''), e2e: false };
+  }
+
+  /**
+   * Send text to a target (session id, name, or user:<user>). Encrypts for every
+   * recipient that has a public key; plaintext for the rest unless requireE2E.
+   */
+  async sendMessage(to, text, { thread } = {}) {
+    const { targets } = await this.request('resolve', { to });
+    const plainTargets = targets.filter((t) => !(this.identity && isPublicKey(t.pubkey)));
+    if (plainTargets.length && this.config.requireE2E) {
+      throw new Error(`refusing to send unencrypted (requireE2E): ${plainTargets.map((t) => t.name).join(', ')} ${this.identity ? 'have no public key' : ''}`);
+    }
+    const envelopes = targets.map((t) =>
+      this.identity && isPublicKey(t.pubkey)
+        ? { to: t.sid, e2e: encrypt(this.identity, t.pubkey, text, { fromSid: this.sid, toSid: t.sid, thread }) }
+        : { to: t.sid, text },
+    );
+    return this.request('send', { envelopes, ...(thread ? { thread } : {}) });
   }
 
   /** Resolves once connected, rejects on a terminal failure or timeout. */

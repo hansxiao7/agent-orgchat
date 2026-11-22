@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // orgchat CLI: talk to the agents in your organization from a terminal or script.
 
+import { createInterface } from 'node:readline';
+import crypto from 'node:crypto';
 import { RelayClient, loadConfig, VERSION } from '../lib/relay-client.mjs';
+import { fingerprint } from '../lib/e2e.mjs';
 
 const USAGE = `orgchat ${VERSION} — message AI agent sessions in your organization
 
@@ -12,6 +15,7 @@ Usage:
           [--thread <id>]            thread id to reply in
           [--wait [seconds]]         then wait for the first reply and print it
   orgchat listen [--json]            stay online and print incoming messages
+  orgchat chat                       interactive: read and answer messages from agents
 
 Config: ~/.config/orgchat/config.json or ORGCHAT_RELAY_URL / ORGCHAT_TOKEN / ORGCHAT_ID_TOKEN_CMD.
 The CLI shows up to peers as agent "cli" (override with ORGCHAT_AGENT, name with ORGCHAT_NAME).`;
@@ -34,7 +38,8 @@ function parse(argv) {
 function printMessage(m, json) {
   if (json) return console.log(JSON.stringify(m));
   const who = `${m.from?.name} (${m.from?.agent || '?'}, ${m.from?.user}, ${m.from?.sid})`;
-  console.log(`\n[${m.ts}] ${who}${m.thread ? ` #${m.thread}` : ''}\n${m.text}`);
+  const lock = m.e2e && !m.decryptError ? ` 🔒 ${m.senderFingerprint}${m.senderKey === 'new' ? ' (new key)' : ''}` : ' (unencrypted)';
+  console.log(`\n[${m.ts}] ${who}${m.thread ? ` #${m.thread}` : ''}${lock}\n${m.text}`);
 }
 
 async function main() {
@@ -45,16 +50,17 @@ async function main() {
   }
 
   const config = loadConfig({ log: (m) => console.error(m) });
-  if (!process.env.ORGCHAT_NAME && cmd !== 'listen') config.name = `${config.user}@${config.host}:cli`;
+  const longLived = cmd === 'listen' || cmd === 'chat';
+  if (!process.env.ORGCHAT_NAME && !longLived) config.name = `${config.user}@${config.host}:cli`;
   const queued = [];
   let onMsg = (m) => queued.push(m);
   const relay = new RelayClient(config, {
     agent: config.agent || 'cli',
     client: `orgchat-cli/${VERSION}`,
-    reconnect: cmd === 'listen',
+    reconnect: longLived,
     onMessage: (m) => onMsg(m),
     onStatus: (state, error) => {
-      if (cmd === 'listen' && error) console.error(`[orgchat] ${state}: ${error}`);
+      if (longLived && error) console.error(`[orgchat] ${state}: ${error}`);
     },
   });
   relay.connect();
@@ -63,14 +69,14 @@ async function main() {
     switch (cmd) {
       case 'whoami': {
         const me = await relay.ready();
-        console.log(JSON.stringify({ relay_url: config.relayUrl, session: me }, null, 2));
+        console.log(JSON.stringify({ relay_url: config.relayUrl, session: me, e2e: relay.identity ? { fingerprint: relay.identity.fingerprint, required: config.requireE2E } : { enabled: false } }, null, 2));
         break;
       }
       case 'peers': {
         await relay.ready();
         const { peers } = await relay.request('list', {});
         if (flags.json) console.log(JSON.stringify(peers, null, 2));
-        else for (const p of peers) console.log(`${p.sid}  ${p.agent || '?'}\t${p.user}\t${p.name}`);
+        else for (const p of peers) console.log(`${p.sid}  ${p.agent || '?'}\t${p.user}\t${p.name}\t${p.pubkey ? '🔒 ' + fingerprint(p.pubkey) : 'unencrypted'}`);
         break;
       }
       case 'send': {
@@ -78,8 +84,8 @@ async function main() {
         const text = words.join(' ');
         if (!to || !text) throw new Error('usage: orgchat send <to> <text...>');
         await relay.ready();
-        const res = await relay.request('send', { to, text, ...(flags.thread ? { thread: flags.thread } : {}) });
-        for (const s of res.sent) console.error(`${s.status} to ${s.name} (${s.to}) id=${s.id}`);
+        const res = await relay.sendMessage(to, text, { thread: flags.thread });
+        for (const s of res.sent) console.error(`${s.status}${s.e2e ? ' 🔒' : ' (unencrypted)'} to ${s.name} (${s.to}) id=${s.id}`);
         if (flags.wait) {
           const targets = new Set(res.sent.map((s) => s.to));
           const reply = await new Promise((resolve) => {
@@ -106,6 +112,10 @@ async function main() {
         await new Promise(() => {});
         break;
       }
+      case 'chat': {
+        await chat(relay, queued, (fn) => (onMsg = fn));
+        break;
+      }
       default:
         throw new Error(`unknown command: ${cmd}\n\n${USAGE}`);
     }
@@ -115,6 +125,52 @@ async function main() {
   } finally {
     relay.close();
   }
+}
+
+const dim = (s) => (process.stdout.isTTY ? `\x1b[2m${s}\x1b[0m` : s);
+const bold = (s) => (process.stdout.isTTY ? `\x1b[1m${s}\x1b[0m` : s);
+
+async function chat(relay, queued, setHandler) {
+  const me = await relay.ready();
+  const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: '> ' });
+  let last = null; // { sid, name, thread }
+  const print = (text) => {
+    process.stdout.write('\r\x1b[K' + text + '\n');
+    rl.prompt(true);
+  };
+  const show = (m) => {
+    const lock = m.e2e && !m.decryptError ? '🔒' : '(unencrypted)';
+    print(`${bold('◀ ' + m.from?.name)} ${dim(`· ${m.from?.agent || '?'} · ${m.from?.user}`)} ${lock}\n  ${m.text.split('\n').join('\n  ')}`);
+    last = { sid: m.from?.sid, name: m.from?.name, thread: m.thread };
+  };
+  console.log(dim(`orgchat · ${me.name} (${me.org})${relay.identity ? ` · 🔒 ${relay.identity.fingerprint}` : ''}`));
+  console.log(dim('Reply, or "@<session> msg" · /peers · /quit'));
+  queued.splice(0).forEach(show);
+  setHandler(show);
+  rl.prompt();
+  for await (const line of rl) {
+    const input = line.trim();
+    if (!input) { rl.prompt(); continue; }
+    if (input === '/quit') break;
+    try {
+      if (input === '/peers') {
+        const { peers } = await relay.request('list', {});
+        print(peers.filter((p) => p.sid !== relay.sid).map((p) => `  ${p.name} ${dim(`· ${p.agent || '?'} · ${p.user}`)} ${p.pubkey ? '🔒' : ''}`).join('\n') || '  nobody else is online');
+        continue;
+      }
+      const at = /^@(\S+)\s+([\s\S]+)$/.exec(input);
+      const to = at ? at[1] : last?.sid;
+      if (!to) { print(dim('Nobody to reply to yet. Start with @<session> <message>.')); continue; }
+      const thread = at ? 't_' + crypto.randomBytes(4).toString('hex') : last.thread;
+      const res = await relay.sendMessage(to, at ? at[2] : input, { thread });
+      const s = res.sent[0];
+      if (at) last = { sid: s.to, name: s.name, thread };
+      print(dim(`▶ ${s.status} to ${res.sent.map((x) => x.name).join(', ')}${res.sent.every((x) => x.e2e) ? ' 🔒' : ''}`));
+    } catch (err) {
+      print(`orgchat: ${err.message}`);
+    }
+  }
+  rl.close();
 }
 
 main();

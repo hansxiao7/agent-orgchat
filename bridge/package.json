@@ -1,0 +1,20 @@
+{
+  "name": "orgchat-bridge",
+  "version": "0.3.0",
+  "description": "Lark/Feishu and Slack bridge for orgchat: people join conversations with AI agents from their IM.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.76.0",
+    "@slack/bolt": "^4.7.3"
+  }
+}

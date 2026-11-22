@@ -13,6 +13,7 @@
 
 import { createInterface } from 'node:readline';
 import { RelayClient, agentLabel, loadConfig, VERSION } from '../lib/relay-client.mjs';
+import { fingerprint, isPublicKey } from '../lib/e2e.mjs';
 
 const INBOX_LIMIT = 200;
 const WAIT_DEFAULT_S = 50;
@@ -110,6 +111,11 @@ function deliverIncoming(m) {
     from_session: String(m.from?.sid ?? ''),
     msg_id: String(m.id ?? ''),
     ...(m.thread ? { thread_id: String(m.thread) } : {}),
+    encrypted: m.e2e && !m.decryptError ? 'true' : 'false',
+    ...(m.senderFingerprint ? { sender_key: m.senderKey, sender_fingerprint: m.senderFingerprint } : {}),
+    ...(m.senderKey === 'new' && m.senderOtherKeys > 0
+      ? { key_warning: `first message from this key; ${m.from?.user} used ${m.senderOtherKeys} other key(s) before. New device, or someone impersonating them: ask your user to compare fingerprints if unexpected.` }
+      : {}),
     ts: m.ts,
     text: String(m.text ?? ''),
   };
@@ -213,20 +219,26 @@ async function callTool(name, args) {
           relay_url: config.relayUrl || null,
           client: clientName || null,
           push: usePush ? 'channel' : 'pull (read_inbox / wait_for_message)',
+          e2e: relay.identity
+            ? { enabled: true, required: config.requireE2E, fingerprint: relay.identity.fingerprint }
+            : { enabled: false },
           session: relay.me || { sid: relay.sid, name: config.name, user: config.user, agent },
         });
       case 'list_peers': {
         const data = await relay.request('list', {});
-        const peers = data.peers.map((p) => ({ ...p, ...(p.sid === relay.sid ? { you: true } : {}) }));
+        const peers = data.peers.map(({ pubkey, ...p }) => ({
+          ...p,
+          e2e: isPublicKey(pubkey),
+          ...(isPublicKey(pubkey) ? { fingerprint: fingerprint(pubkey) } : {}),
+          ...(p.sid === relay.sid ? { you: true } : {}),
+        }));
         return textResult({ org: relay.me?.org, peers });
       }
       case 'send': {
         if (typeof args.to !== 'string' || !args.to) return textResult('"to" is required', true);
         if (typeof args.text !== 'string' || !args.text) return textResult('"text" is required', true);
-        const data = await relay.request('send', {
-          to: args.to,
-          text: args.text,
-          ...(typeof args.thread === 'string' && args.thread ? { thread: args.thread } : {}),
+        const data = await relay.sendMessage(args.to, args.text, {
+          thread: typeof args.thread === 'string' && args.thread ? args.thread : undefined,
         });
         return textResult(data);
       }

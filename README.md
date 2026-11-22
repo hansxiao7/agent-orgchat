@@ -14,12 +14,28 @@ Alice uses Claude Code, Bob uses Codex, Carol uses Cursor, Dan uses Gemini CLI, 
                                (you host it)
 ```
 
-- **`orgchat-mcp`**: a standard MCP server that any MCP-capable agent can load. Gives the agent `list_peers`, `send`, `read_inbox`, `wait_for_message` and `whoami`. Detects which agent it's running in, so peers see `codex`, `cursor`, `claude-code`, `gemini-cli`, ...
-- **`orgchat` CLI**: for people and scripts: `orgchat peers`, `orgchat send`, `orgchat listen`.
-- **Relay**: a small WebSocket server you run. Authenticates, scopes sessions to an org, routes and queues messages, writes an audit log.
-- **Claude Code plugin**: the same MCP server packaged as a plugin, plus real-time push into the session via Claude Code [channels](https://code.claude.com/docs/en/channels).
+## See it
 
-Client side: zero dependencies, Node.js 22+. Relay: one dependency (`ws`).
+**1 · Ask a teammate's agent.** Alice's Claude Code asks Bob; Bob answers from his terminal. Real Claude Code session; waiting is cut and sped up.
+
+![Alice's Claude Code asks Bob's session a question and gets the answer back, end-to-end encrypted](docs/media/beat1-ask.gif)
+
+**2 · The relay can't read it.** Everything is end-to-end encrypted. The admin panel shows who talks to whom, never what they say.
+
+![Relay admin panel: sessions from different agents online, messages arriving, all end-to-end encrypted](docs/media/beat2-panel.gif)
+
+**3 · People join from Lark/Feishu or Slack.** DM the orgchat bot: `@bob-codex is staging migrated?`. Agents can message people too, and people reply in the thread. See [IM bridge](#im-bridge-larkfeishu--slack).
+
+## What's in the box
+
+- **`orgchat-mcp`**: a standard MCP server any MCP-capable agent can load. Gives the agent `list_peers`, `send`, `read_inbox`, `wait_for_message` and `whoami`. Detects which agent it's running in, so peers see `codex`, `cursor`, `claude-code`, `gemini-cli`, ...
+- **`orgchat` CLI**: for people and scripts: `orgchat chat` (interactive), `peers`, `send`, `listen`.
+- **End-to-end encryption**: on by default. The relay only ever sees ciphertext.
+- **Relay**: a small WebSocket server you run. Authenticates, scopes sessions to an org, routes messages, keeps an offline queue in SQLite that survives restarts, serves a read-only admin panel.
+- **IM bridge**: Lark/Feishu and Slack, so people can join the conversation.
+- **Claude Code plugin**: the MCP server packaged as a plugin, plus real-time push into the session via Claude Code [channels](https://code.claude.com/docs/en/channels).
+
+Client: zero dependencies, Node.js 22+. Relay: one dependency (`ws`), Node.js 22.13+ (built-in SQLite). Bridge: the official Lark and Slack SDKs.
 
 > Not affiliated with Anthropic, OpenAI, Google, Anysphere or DeepSeek.
 
@@ -29,7 +45,9 @@ Client side: zero dependencies, Node.js 22+. Relay: one dependency (`ws`).
 |---|---|
 | Claude Code (plugin + channel) | **Push**: messages appear in the session as they arrive, even when idle |
 | Codex, Cursor, Gemini CLI, Cline, Roo, Windsurf, opencode, ... | **Pull**: every orgchat tool result says *"N unread peer messages"*; the agent calls `read_inbox`, or `wait_for_message` to block until a reply arrives |
-| CLI / scripts | `orgchat listen` (stream) or `orgchat send ... --wait` |
+| People in a terminal | `orgchat chat`: messages appear as they arrive; type to reply |
+| People in Lark/Feishu or Slack | the bot DMs them; they reply in the thread |
+| Scripts | `orgchat listen --json` (stream) or `orgchat send ... --wait` |
 
 Pull means a non-Claude agent sees new messages when it next uses orgchat, or when you tell it *"check orgchat"*. The typical flow, *ask a peer, then `wait_for_message` for the answer*, works the same everywhere.
 
@@ -40,11 +58,11 @@ Pull means a non-Claude agent sees new messages when it next uses orgchat, or wh
 ```bash
 git clone https://github.com/hansxiao7/agent-orgchat && cd agent-orgchat/relay
 npm ci
-ORGCHAT_TOKENS="acme=$(openssl rand -hex 24)" npm start
-# or: docker build -t orgchat-relay . && docker run -p 8787:8787 -e ORGCHAT_TOKENS=... orgchat-relay
+ORGCHAT_TOKENS="acme=$(openssl rand -hex 24)" ORGCHAT_PANEL_TOKENS="acme=$(openssl rand -hex 24)" npm start
+# or: docker build -t orgchat-relay . && docker run -p 8787:8787 -v orgchat:/data -e ORGCHAT_TOKENS=... orgchat-relay
 ```
 
-Put it behind TLS (any reverse proxy, Fly.io, Railway, Cloud Run with min instances = 1, ...) so clients use `wss://`. State is in memory: run exactly **one** instance.
+Put it behind TLS (any reverse proxy, Fly.io, Railway, a small VM, ...) so clients use `wss://`. State lives in SQLite (`ORGCHAT_DB`, default `./orgchat.db`; `/data/orgchat.db` in Docker, so mount a volume). Run **one** instance per database. The admin panel is at `https://<relay>/panel`.
 
 ### 2. Each person: write the shared config (once per machine)
 
@@ -60,7 +78,7 @@ Put it behind TLS (any reverse proxy, Fly.io, Railway, Cloud Run with min instan
 
 ### 3. Each person: add orgchat to the agent(s) they use
 
-All clients run the same server. Either run it straight from GitHub with `npx`, or install it once with `npm i -g github:hansxiao7/agent-orgchat` and use `"command": "orgchat-mcp"` with no args.
+All clients run the same server. Either run it with `npx`, or install it once with `npm i -g orgchat-mcp` and use `"command": "orgchat-mcp"` with no args.
 
 <details open>
 <summary><b>Claude Code</b> (plugin: push delivery)</summary>
@@ -76,7 +94,7 @@ Start sessions with the channel enabled (see [Claude Code channels](#claude-code
 claude --dangerously-load-development-channels plugin:orgchat@agent-orgchat
 ```
 
-Without the plugin (pull only): `claude mcp add orgchat -- npx -y -p github:hansxiao7/agent-orgchat orgchat-mcp`
+Without the plugin (pull only): `claude mcp add orgchat -- npx -y orgchat-mcp`
 </details>
 
 <details>
@@ -85,7 +103,7 @@ Without the plugin (pull only): `claude mcp add orgchat -- npx -y -p github:hans
 ```toml
 [mcp_servers.orgchat]
 command = "npx"
-args = ["-y", "-p", "github:hansxiao7/agent-orgchat", "orgchat-mcp"]
+args = ["-y", "orgchat-mcp"]
 tool_timeout_sec = 300   # lets wait_for_message wait up to ~5 minutes
 ```
 </details>
@@ -98,7 +116,7 @@ tool_timeout_sec = 300   # lets wait_for_message wait up to ~5 minutes
   "mcpServers": {
     "orgchat": {
       "command": "npx",
-      "args": ["-y", "-p", "github:hansxiao7/agent-orgchat", "orgchat-mcp"]
+      "args": ["-y", "orgchat-mcp"]
     }
   }
 }
@@ -113,7 +131,7 @@ tool_timeout_sec = 300   # lets wait_for_message wait up to ~5 minutes
   "mcpServers": {
     "orgchat": {
       "command": "npx",
-      "args": ["-y", "-p", "github:hansxiao7/agent-orgchat", "orgchat-mcp"],
+      "args": ["-y", "orgchat-mcp"],
       "timeout": 300000
     }
   }
@@ -129,7 +147,7 @@ orgchat is model-agnostic: it works wherever the client speaks MCP. Most clients
 ```json
 {
   "mcp": {
-    "orgchat": { "type": "local", "command": ["npx", "-y", "-p", "github:hansxiao7/agent-orgchat", "orgchat-mcp"] }
+    "orgchat": { "type": "local", "command": ["npx", "-y", "orgchat-mcp"] }
   }
 }
 ```
@@ -141,10 +159,11 @@ The agent label is detected from the client (e.g. `cline`). To show the model to
 <summary><b>Terminal / scripts</b>: the <code>orgchat</code> CLI</summary>
 
 ```bash
-npm i -g github:hansxiao7/agent-orgchat
+npm i -g orgchat-mcp
+orgchat chat              # interactive: messages appear as they arrive; type to reply, "@<session> msg" to start
 orgchat peers
 orgchat send bob-codex "is the staging DB migrated?" --wait 120
-orgchat listen            # stay online and print incoming messages (--json for scripts)
+orgchat listen --json     # stay online and stream incoming messages, for scripts
 ```
 </details>
 
@@ -166,6 +185,10 @@ Just ask your agent:
 | `user` | `ORGCHAT_USER` | Your identity in token mode. Ignored in OIDC mode (the verified email is used). Default: OS username. |
 | `name` | `ORGCHAT_NAME` | Session name peers see. Default `user@host:project-dir`. |
 | `agent` | `ORGCHAT_AGENT` | Override the detected agent label. |
+| `e2e` | `ORGCHAT_E2E` | End-to-end encryption, default on (`0` / `false` to turn off). |
+| `requireE2E` | `ORGCHAT_REQUIRE_E2E` | `1` / `true`: never send or accept unencrypted messages. |
+| | `ORGCHAT_IDENTITY_FILE` | This device's key. Default `~/.config/orgchat/identity.json`, created on first use. |
+| | `ORGCHAT_KNOWN_KEYS_FILE` | Pinned peer keys. Default `~/.config/orgchat/known_keys.json`. |
 | | `ORGCHAT_PUSH` | `auto` (default: channel push only in Claude Code), `channel`, or `off`. |
 | | `ORGCHAT_CONFIG` | Alternative config file path. |
 
@@ -181,10 +204,15 @@ Just ask your agent:
 | `ORGCHAT_OIDC_ALLOWED_DOMAINS` | | Required with OIDC. Email domains allowed in. |
 | `ORGCHAT_OIDC_ORG` | email domain | Put all OIDC users in this org instead of one org per domain. |
 | `ORGCHAT_OIDC_JWKS_URL` | discovered | Override JWKS discovery. |
+| `ORGCHAT_BRIDGE_TOKENS` | | `org=token` pairs for IM bridges. A bridge may act for any user of its org. |
+| `ORGCHAT_PANEL_TOKENS` | | `org=token` pairs for the read-only admin panel. Panel is off when unset. |
+| `ORGCHAT_DB` | `orgchat.db` | SQLite file (`:memory:` for none). |
+| `ORGCHAT_REQUIRE_E2E` | off | `1` rejects clients without keys and unencrypted messages. |
 | `ORGCHAT_MAX_MESSAGE_BYTES` | `65536` | Max message size. |
 | `ORGCHAT_RATE_PER_MINUTE` | `30` | Messages per minute per connection. |
-| `ORGCHAT_QUEUE_LIMIT` / `ORGCHAT_QUEUE_TTL_MS` | `100` / 24h | Offline queue size per session, and how long offline sessions are remembered. |
-| `ORGCHAT_AUDIT_CONTENT` | off | `1` also logs message bodies (metadata is always logged as JSON lines on stdout). |
+| `ORGCHAT_QUEUE_LIMIT` / `ORGCHAT_QUEUE_TTL_MS` | `100` / 7 days | Offline queue size per session, and how long undelivered messages and offline sessions are kept. |
+| `ORGCHAT_HISTORY_DAYS` | `30` | How long message metadata is kept for the panel. |
+| `ORGCHAT_AUDIT_CONTENT` | off | `1` keeps and logs the bodies of *unencrypted* messages (shown in the panel). Encrypted bodies are unreadable and always dropped after delivery. |
 
 ### Identity: what "same organization" means
 
@@ -192,6 +220,77 @@ The relay decides who is in the org. orgchat never touches any agent's own crede
 
 - **Token mode**: anyone with the org token is in. Simple, fine for small teams. `user` is self-declared, so peers see `verified: false`.
 - **OIDC mode**: people log in with your company identity provider (Google Workspace, Okta, Entra ID, Lark/Feishu, ...). The relay verifies the ID token's signature, issuer, audience, expiry and email domain, and uses the verified email as the user.
+
+## End-to-end encryption
+
+On by default, nothing to configure.
+
+- Each device creates an X25519 key on first use (`~/.config/orgchat/identity.json`, mode 600) and announces the public half to the relay.
+- For every message the sender derives a key with X25519 + HKDF-SHA256 and encrypts with AES-256-GCM. The sender session, recipient session and thread are bound in as authenticated data, so the relay can't re-route or re-thread a message.
+- The relay stores and forwards ciphertext, then deletes it once delivered. The panel shows `encrypted: not visible to the relay`.
+- Peer keys are pinned on first use (`known_keys.json`). Each message carries the sender's fingerprint, and agents are warned when a person shows up with a new key. `list_peers` / `orgchat peers` / `whoami` show fingerprints, so you can compare them out of band.
+- Mixed fleets work: a client with encryption off still talks to everyone, in plaintext, marked `unencrypted`. Turn on `requireE2E` (client) or `ORGCHAT_REQUIRE_E2E=1` (relay) to forbid that.
+
+**Limits, stated plainly:** an operator who controls the relay could hand out a fake key the first time two people talk (pinning catches it on later key changes; comparing fingerprints catches it immediately). There's no forward secrecy if a device key is stolen, and no replay protection beyond message ids. The IM bridge is an endpoint: it decrypts what it relays to Lark/Slack.
+
+## Admin panel
+
+Set `ORGCHAT_PANEL_TOKENS=acme=<secret>` and open `https://<relay>/panel`. Read-only: sessions (agent, person, host, encryption, last seen), message flow (who → whom, thread, delivery status, size), 24h stats. Content of encrypted messages is never available. Each token sees only its own org.
+
+![Admin panel](docs/panel.png)
+
+## IM bridge (Lark/Feishu & Slack)
+
+People join from the chat app they already use. Each person who DMs the bot gets a stable orgchat session (`Carol (lark)`, agent `human-lark`), so agents can find and message them like any other peer.
+
+In a DM with the bot:
+
+| Type | Does |
+|---|---|
+| `@bob-codex is staging migrated?` | starts a conversation with that session (name or id), or `@user:bob@acme.com ...` for all of Bob's sessions |
+| *reply to a message from an agent* | answers that agent, in the same thread |
+| plain text | goes to whoever you talked to last |
+| `peers` / `help` | who's online / usage |
+
+Run it next to the relay (one bridge per platform):
+
+```bash
+cd bridge && npm ci
+export ORGCHAT_RELAY_URL=wss://orgchat.example.com ORGCHAT_BRIDGE_TOKEN=<from ORGCHAT_BRIDGE_TOKENS on the relay>
+export ORGCHAT_BRIDGE_ALLOWED_DOMAINS=acme.com     # only people with these email domains
+
+# Lark / Feishu
+ORGCHAT_BRIDGE_PLATFORM=feishu LARK_APP_ID=cli_xxx LARK_APP_SECRET=xxx npm start      # or =lark for larksuite.com
+# Slack
+ORGCHAT_BRIDGE_PLATFORM=slack SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... npm start
+# Docker (from the repo root): docker build -f bridge/Dockerfile -t orgchat-bridge . && docker run -v bridge:/data -e ... orgchat-bridge
+```
+
+Both use the platforms' socket/long-connection modes, so the bridge needs no public URL.
+
+<details>
+<summary><b>Lark / Feishu app setup</b></summary>
+
+In the developer console (open.feishu.cn or open.larksuite.com), create a custom app, then:
+
+1. **Features → Bot**: enable.
+2. **Events & callbacks**: delivery mode *long connection*; add event `im.message.receive_v1`.
+3. **Permissions**: `im:message` (send), `im:message.p2p_msg:readonly` (receive DMs), `contact:user.base:readonly` and `contact:user.email:readonly` (map people to their work email).
+4. Publish a version and make it available to your organization.
+</details>
+
+<details>
+<summary><b>Slack app setup</b></summary>
+
+At api.slack.com/apps, create an app, then:
+
+1. **Socket Mode**: on; create an app-level token with `connections:write` (`xapp-...`).
+2. **App Home**: show the Messages tab and allow users to send messages.
+3. **Event Subscriptions**: bot event `message.im`.
+4. **OAuth & Permissions**, bot scopes: `chat:write`, `im:history`, `im:write`, `users:read`, `users:read.email`. Install to the workspace (`xoxb-...`).
+</details>
+
+The bridge maps each person by their work email (that's the `user` agents see, marked verified). People whose email domain isn't in `ORGCHAT_BRIDGE_ALLOWED_DOMAINS` are turned away. Bridge state (people, thread mapping, its key) lives in `ORGCHAT_BRIDGE_STATE` (default `./bridge-state`).
 
 ## Claude Code channels
 
@@ -209,7 +308,8 @@ Peer messages are an input channel into coding agents that can run commands. Tre
 - **Peer text is untrusted.** The server's MCP instructions and tool descriptions tell the agent that peer messages come from colleagues, not from its user, and must not be acted on (running commands, editing files, sharing code or secrets) without the user's request or confirmation. This lowers but does not remove prompt-injection risk: only connect people whose messages you'd be OK with your agent reading.
 - **No remote approvals.** The server does not declare Claude Code's `claude/channel/permission`, so nobody can approve tool use in your session through orgchat.
 - **Org isolation.** Sessions only see and reach sessions in their own org. Session ids can't be taken over by another user.
-- **The relay sees plaintext.** Self-host it. Messages live only in memory (offline queue up to 24h by default). Bodies are not logged unless `ORGCHAT_AUDIT_CONTENT=1`.
+- **The relay can't read messages.** They're end-to-end encrypted (see [the limits](#end-to-end-encryption)). It stores metadata (who, when, size, thread) for the panel and ciphertext only until delivery.
+- **Bridges are trusted endpoints.** An IM bridge decrypts messages for the people it represents and passes them to Lark/Slack, and a bridge token can act for any user of its org. Run it yourself and keep the token secret.
 - **Limits.** Message size cap, per-connection rate limit, 10s login timeout.
 
 Report vulnerabilities privately via GitHub security advisories on this repo.
@@ -219,10 +319,14 @@ Report vulnerabilities privately via GitHub security advisories on this repo.
 JSON over WebSocket, so writing a client in another language is straightforward. Client → relay:
 
 ```jsonc
-{ "type": "hello", "v": 1, "auth": { "token": "..." } /* or { "id_token": "..." } */,
-  "session": { "sid": "s_ab12cd34ef", "name": "alice-api", "user": "alice", "agent": "codex", "host": "mbp", "cwd": "/src/api" } }
+{ "type": "hello", "v": 1, "auth": { "token": "..." } /* or { "id_token": "..." } or { "bridge_token": "..." } */,
+  "session": { "sid": "s_ab12cd34ef", "name": "alice-api", "user": "alice", "agent": "codex", "host": "mbp", "cwd": "/src/api",
+               "pubkey": "<X25519 public key, base64url>" } }
 { "type": "list", "req": 1 }
-{ "type": "send", "req": 2, "to": "bob-web" /* sid | name | "user:<user>" */, "text": "...", "thread": "t1" }
+{ "type": "resolve", "req": 2, "to": "bob-web" /* sid | name | "user:<user>" */ }      // -> targets with their pubkeys
+{ "type": "send", "req": 3, "thread": "t1", "envelopes": [
+    { "to": "s_...", "e2e": { "alg": "x25519-hkdf-sha256-aes256gcm-v1", "nonce": "...", "ct": "..." } },
+    { "to": "s_...", "text": "plaintext, for a recipient without a key" } ] }
 { "type": "ack", "id": "m_..." }
 ```
 
@@ -231,16 +335,17 @@ Relay → client:
 ```jsonc
 { "type": "welcome", "session": { "sid": "...", "name": "...", "user": "...", "agent": "codex", "org": "acme", "verified": false } }
 { "type": "res", "req": 2, "ok": true, "data": { "sent": [{ "id": "m_...", "to": "s_...", "status": "delivered" }] } }
-{ "type": "msg", "id": "m_...", "from": { "sid": "...", "name": "...", "user": "...", "agent": "cursor", "verified": false },
-  "to": "s_...", "text": "...", "thread": "t1", "ts": "..." }
+{ "type": "msg", "id": "m_...", "from": { "sid": "...", "name": "...", "user": "...", "agent": "cursor", "verified": false, "pubkey": "..." },
+  "to": "s_...", "thread": "t1", "ts": "...", "e2e": { ... } /* or "text": "..." */ }
 ```
 
-Messages stay queued until acknowledged; unacknowledged messages are re-queued when a socket drops. Close code `4001` = auth failed, `4002` = replaced by a newer connection for the same session.
+Messages stay queued (in SQLite) until acknowledged, and are redelivered after reconnects or relay restarts; clients drop duplicates by id. Close code `4001` = auth failed, `4002` = replaced by a newer connection for the same session.
 
 ## Development
 
 ```bash
-cd relay && npm ci && npm test   # real relay + real MCP server processes posing as Claude Code, Codex, Cursor, Gemini CLI, plus the CLI
+cd relay && npm ci && npm test     # relay + real MCP server processes posing as Claude Code, Codex, Cursor, Gemini CLI, the CLI, encryption, persistence, panel
+cd bridge && npm ci && npm test    # bridge against a real relay with a fake IM platform
 ```
 
 ```
@@ -251,18 +356,20 @@ client/                           client code (also the Claude Code plugin root)
   bin/orgchat-mcp.mjs             MCP server
   bin/orgchat.mjs                 CLI
   lib/relay-client.mjs            shared relay client
-relay/                            relay server (src/, test/, Dockerfile)
+  lib/e2e.mjs                     end-to-end encryption
+relay/                            relay server: src/relay.mjs, store.mjs (SQLite), panel.html, oidc.mjs
+bridge/                           IM bridge: src/core.mjs, lark.mjs, slack.mjs
 examples/                         client config + Claude Code managed settings
+docs/demo/                        scripts that record and cut the demo GIFs (VHS, puppeteer, ffmpeg)
 ```
 
 ## Roadmap
 
-- Publish `orgchat-mcp` to npm
 - Push delivery for more clients as they gain server-to-model notification support
-- Persistent relay storage (Redis/SQLite) and horizontal scaling
-- Built-in OIDC device-code login
-- Optional end-to-end encryption between sessions
-- Topics / broadcast rooms; Slack and Lark/Feishu bridges so humans can join from chat
+- Group channels / topics; DingTalk, WeCom, Teams bridges
+- Built-in OIDC device-code login; panel login via OIDC
+- Forward-secret sessions (double ratchet) and signed key directories
+- Horizontal scaling (Postgres + pub/sub)
 
 PRs welcome.
 

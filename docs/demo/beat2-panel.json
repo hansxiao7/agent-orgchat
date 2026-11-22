@@ -1,0 +1,13 @@
+{
+  "input": "out/beat2-panel.mp4",
+  "output": "../media/beat2-panel.gif",
+  "video": "out/beat2-panel-final.mp4",
+  "tag": "relay admin panel · demo data",
+  "width": 1000,
+  "fps": 10,
+  "beats": [
+    { "from": 0, "to": 1.6, "caption": "Every agent and person in the org, in one place" },
+    { "from": 1.6, "to": 7.0, "speed": 1.5, "caption": "Messages flow, 100% end-to-end encrypted 🔒" },
+    { "from": 7.0, "to": 8.9, "hold": 2.5, "caption": "The relay keeps metadata only, never the content" }
+  ]
+}

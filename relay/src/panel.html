@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orgchat panel</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e4e4df;
+    --accent: #2f6f5e; --ok: #2e7d4f; --warn: #b26a00; --bad: #b3261e; --chip: #efefea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --panel: #1f1f1d; --text: #ecece8; --muted: #9a9a93; --line: #33332f;
+      --accent: #6fbfa6; --ok: #5cc28a; --warn: #e0a040; --bad: #f2786d; --chip: #2a2a27; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 1; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  header .org { color: var(--muted); }
+  header .spacer { flex: 1; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px; display: grid; gap: 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .card .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .card .k { color: var(--muted); font-size: 12px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 550; }
+  tr:last-child td { border-bottom: 0; }
+  td.text { white-space: pre-wrap; min-width: 240px; max-width: 520px; word-break: break-word; }
+  .muted { color: var(--muted); }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--line); margin-right: 6px; }
+  .dot.on { background: var(--ok); }
+  .s-acked { color: var(--ok); } .s-sent { color: var(--accent); } .s-queued { color: var(--warn); }
+  .s-expired, .s-dropped { color: var(--bad); }
+  .login { max-width: 420px; margin: 12vh auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
+  .login h1 { margin-top: 0; font-size: 18px; }
+  input { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+  button { padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; margin-top: 12px; width: 100%; }
+  .err { color: var(--bad); margin-top: 10px; min-height: 1.2em; }
+  .note { color: var(--muted); font-size: 12px; padding: 10px 14px; }
+  @media (max-width: 640px) { main { padding: 12px; } header { padding: 12px; } }
+</style>
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <h1>orgchat panel</h1>
+  <p class="muted">Paste a panel token (ORGCHAT_PANEL_TOKENS on the relay). It is kept only in this browser tab.</p>
+  <form id="loginForm">
+    <input id="token" type="password" autocomplete="off" placeholder="panel token" required>
+    <button class="primary" type="submit">Open</button>
+    <div id="loginErr" class="err"></div>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <h1>orgchat</h1><span class="org" id="org"></span>
+    <span class="spacer"></span>
+    <span class="muted" id="updated"></span>
+    <button id="logout" type="button">Sign out</button>
+  </header>
+  <main>
+    <div class="cards" id="cards"></div>
+    <section>
+      <h2>Sessions</h2>
+      <div class="scroll"><table>
+        <thead><tr><th>Session</th><th>Agent</th><th>User</th><th>Host · dir</th><th>E2E</th><th>Last seen</th></tr></thead>
+        <tbody id="sessions"></tbody>
+      </table></div>
+    </section>
+    <section>
+      <h2>Messages</h2>
+      <div class="scroll"><table>
+        <thead><tr><th>Time</th><th>From</th><th>To</th><th>Thread</th><th>E2E</th><th>Status</th><th>Size</th><th>Content</th></tr></thead>
+        <tbody id="messages"></tbody>
+      </table></div>
+      <div class="note" id="contentNote"></div>
+    </section>
+  </main>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let token = null;
+  try { token = sessionStorage.getItem('orgchat-panel-token'); } catch {}
+  let timer = null;
+  const every = (Number(new URLSearchParams(location.search).get('refresh')) || 5) * 1000;
+
+  const ago = (iso) => {
+    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return Math.floor(s) + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  };
+  const time = (iso) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const who = (p) => `${esc(p.name)} <span class="chip">${esc(p.agent || '?')}</span><div class="muted">${esc(p.user)}</div>`;
+
+  async function api(path) {
+    const res = await fetch(path, { headers: { authorization: 'Bearer ' + token } });
+    if (res.status === 401) throw Object.assign(new Error('Invalid token'), { auth: true });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  function showLogin(msg) {
+    clearTimeout(timer);
+    $('app').hidden = true; $('login').hidden = false;
+    $('loginErr').textContent = msg || '';
+  }
+
+  async function refresh() {
+    try {
+      const [ov, ms] = await Promise.all([api('/api/overview'), api('/api/messages?limit=200')]);
+      $('login').hidden = true; $('app').hidden = false;
+      $('org').textContent = ov.org;
+      const st = ov.stats_24h || {};
+      const online = ov.sessions.filter((s) => s.online).length;
+      const pct = st.total ? Math.round(100 * (st.e2e || 0) / st.total) + '%' : '—';
+      $('cards').innerHTML = [
+        [online, 'sessions online'],
+        [st.total || 0, 'messages (24h)'],
+        [pct, 'end-to-end encrypted (24h)'],
+        [st.pending || 0, 'waiting for delivery'],
+        [st.senders || 0, 'people sending (24h)'],
+      ].map(([v, k]) => `<div class="card"><div class="v">${esc(v)}</div><div class="k">${esc(k)}</div></div>`).join('');
+      $('sessions').innerHTML = ov.sessions.map((s) => `<tr>
+        <td><span class="dot ${s.online ? 'on' : ''}"></span>${esc(s.name)}<div class="muted">${esc(s.sid)}</div></td>
+        <td><span class="chip">${esc(s.agent || '?')}</span></td>
+        <td>${esc(s.user)}${s.verified ? ' <span class="muted" title="identity verified by OIDC or the IM bridge">✓</span>' : ''}</td>
+        <td>${esc(s.host)}<div class="muted">${esc(s.cwd)}</div></td>
+        <td>${s.e2e ? '🔒' : '<span class="muted">no</span>'}</td>
+        <td>${s.online ? 'online' : esc(ago(s.last_seen))}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No sessions in the last 24h</td></tr>';
+      $('messages').innerHTML = ms.messages.map((m) => `<tr>
+        <td>${esc(time(m.ts))}</td><td>${who(m.from)}</td><td>${who(m.to)}</td>
+        <td>${esc(m.thread || '')}</td><td>${m.e2e ? '🔒' : '<span class="muted">plain</span>'}</td>
+        <td class="s-${esc(m.status)}">${esc(m.status)}</td><td class="muted">${esc(m.bytes)} B</td>
+        <td class="text">${m.e2e ? '<span class="muted">encrypted: not visible to the relay</span>' : m.text !== undefined ? esc(m.text) : '<span class="muted">not stored</span>'}</td></tr>`).join('')
+        || '<tr><td colspan="8" class="muted">No messages yet</td></tr>';
+      $('contentNote').textContent = ov.relay.keeps_plaintext
+        ? `Unencrypted message bodies are kept (ORGCHAT_AUDIT_CONTENT=1). History: ${ov.relay.history_days} days.`
+        : `The relay stores metadata only; encrypted content is never readable here. History: ${ov.relay.history_days} days.`;
+      $('updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+      timer = setTimeout(refresh, every);
+    } catch (err) {
+      if (err.auth) { try { sessionStorage.removeItem('orgchat-panel-token'); } catch {} return showLogin('Invalid token.'); }
+      $('updated').textContent = 'offline: ' + err.message;
+      timer = setTimeout(refresh, 10000);
+    }
+  }
+
+  $('loginForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    token = $('token').value.trim();
+    try { sessionStorage.setItem('orgchat-panel-token', token); } catch {}
+    refresh();
+  });
+  $('logout').addEventListener('click', () => {
+    token = null;
+    try { sessionStorage.removeItem('orgchat-panel-token'); } catch {}
+    showLogin();
+  });
+
+  token ? refresh() : showLogin();
+})();
+</script>
+</body>
+</html>
