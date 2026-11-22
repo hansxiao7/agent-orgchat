@@ -38,7 +38,7 @@ Pull means a non-Claude agent sees new messages when it next uses orgchat, or wh
 ### 1. Run a relay (once per org)
 
 ```bash
-git clone https://github.com/hansxiao7/claude-orgchat && cd claude-orgchat/relay
+git clone https://github.com/hansxiao7/agent-orgchat && cd agent-orgchat/relay
 npm ci
 ORGCHAT_TOKENS="acme=$(openssl rand -hex 24)" npm start
 # or: docker build -t orgchat-relay . && docker run -p 8787:8787 -e ORGCHAT_TOKENS=... orgchat-relay
@@ -60,23 +60,23 @@ Put it behind TLS (any reverse proxy, Fly.io, Railway, Cloud Run with min instan
 
 ### 3. Each person: add orgchat to the agent(s) they use
 
-All clients run the same server. Either run it straight from GitHub with `npx`, or install it once with `npm i -g github:hansxiao7/claude-orgchat` and use `"command": "orgchat-mcp"` with no args.
+All clients run the same server. Either run it straight from GitHub with `npx`, or install it once with `npm i -g github:hansxiao7/agent-orgchat` and use `"command": "orgchat-mcp"` with no args.
 
 <details open>
 <summary><b>Claude Code</b> (plugin: push delivery)</summary>
 
 ```
-/plugin marketplace add hansxiao7/claude-orgchat
-/plugin install orgchat@claude-orgchat
+/plugin marketplace add hansxiao7/agent-orgchat
+/plugin install orgchat@agent-orgchat
 ```
 
 Start sessions with the channel enabled (see [Claude Code channels](#claude-code-channels)):
 
 ```bash
-claude --dangerously-load-development-channels plugin:orgchat@claude-orgchat
+claude --dangerously-load-development-channels plugin:orgchat@agent-orgchat
 ```
 
-Without the plugin (pull only): `claude mcp add orgchat -- npx -y -p github:hansxiao7/claude-orgchat orgchat-mcp`
+Without the plugin (pull only): `claude mcp add orgchat -- npx -y -p github:hansxiao7/agent-orgchat orgchat-mcp`
 </details>
 
 <details>
@@ -85,7 +85,7 @@ Without the plugin (pull only): `claude mcp add orgchat -- npx -y -p github:hans
 ```toml
 [mcp_servers.orgchat]
 command = "npx"
-args = ["-y", "-p", "github:hansxiao7/claude-orgchat", "orgchat-mcp"]
+args = ["-y", "-p", "github:hansxiao7/agent-orgchat", "orgchat-mcp"]
 tool_timeout_sec = 300   # lets wait_for_message wait up to ~5 minutes
 ```
 </details>
@@ -98,7 +98,7 @@ tool_timeout_sec = 300   # lets wait_for_message wait up to ~5 minutes
   "mcpServers": {
     "orgchat": {
       "command": "npx",
-      "args": ["-y", "-p", "github:hansxiao7/claude-orgchat", "orgchat-mcp"]
+      "args": ["-y", "-p", "github:hansxiao7/agent-orgchat", "orgchat-mcp"]
     }
   }
 }
@@ -113,7 +113,7 @@ tool_timeout_sec = 300   # lets wait_for_message wait up to ~5 minutes
   "mcpServers": {
     "orgchat": {
       "command": "npx",
-      "args": ["-y", "-p", "github:hansxiao7/claude-orgchat", "orgchat-mcp"],
+      "args": ["-y", "-p", "github:hansxiao7/agent-orgchat", "orgchat-mcp"],
       "timeout": 300000
     }
   }
@@ -129,7 +129,7 @@ orgchat is model-agnostic: it works wherever the client speaks MCP. Most clients
 ```json
 {
   "mcp": {
-    "orgchat": { "type": "local", "command": ["npx", "-y", "-p", "github:hansxiao7/claude-orgchat", "orgchat-mcp"] }
+    "orgchat": { "type": "local", "command": ["npx", "-y", "-p", "github:hansxiao7/agent-orgchat", "orgchat-mcp"] }
   }
 }
 ```
@@ -141,7 +141,7 @@ The agent label is detected from the client (e.g. `cline`). To show the model to
 <summary><b>Terminal / scripts</b>: the <code>orgchat</code> CLI</summary>
 
 ```bash
-npm i -g github:hansxiao7/claude-orgchat
+npm i -g github:hansxiao7/agent-orgchat
 orgchat peers
 orgchat send bob-codex "is the staging DB migrated?" --wait 120
 orgchat listen            # stay online and print incoming messages (--json for scripts)
@@ -197,8 +197,8 @@ The relay decides who is in the org. orgchat never touches any agent's own crede
 
 Push delivery in Claude Code uses channels, a research preview:
 
-- **Individually**: start with `claude --dangerously-load-development-channels plugin:orgchat@claude-orgchat`. It asks for confirmation, works only in interactive sessions (not `-p` or the Agent SDK), and needs claude.ai or Console login (not Bedrock/Vertex/Foundry).
-- **Team/Enterprise org**: an Owner enables channels (claude.ai admin console → Organization settings → Claude Code) and deploys managed settings like [`examples/managed-settings.json`](examples/managed-settings.json) (`channelsEnabled`, `allowedChannelPlugins`, `extraKnownMarketplaces`, `enabledPlugins`). `allowedChannelPlugins` **replaces** Anthropic's default allowlist, so list any other channel plugins you use. Users then start with `claude --channels plugin:orgchat@claude-orgchat`.
+- **Individually**: start with `claude --dangerously-load-development-channels plugin:orgchat@agent-orgchat`. It asks for confirmation, works only in interactive sessions (not `-p` or the Agent SDK), and needs claude.ai or Console login (not Bedrock/Vertex/Foundry).
+- **Team/Enterprise org**: an Owner enables channels (claude.ai admin console → Organization settings → Claude Code) and deploys managed settings like [`examples/managed-settings.json`](examples/managed-settings.json) (`channelsEnabled`, `allowedChannelPlugins`, `extraKnownMarketplaces`, `enabledPlugins`). `allowedChannelPlugins` **replaces** Anthropic's default allowlist, so list any other channel plugins you use. Users then start with `claude --channels plugin:orgchat@agent-orgchat`.
 
 Without channels, Claude Code behaves like the other agents (pull). Claude Code's built-in `SendMessage` / `/peers` keeps working alongside for a user's *own* sessions.
 
