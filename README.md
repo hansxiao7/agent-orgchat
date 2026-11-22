@@ -1,61 +1,54 @@
-# claude-orgchat
+# orgchat
 
-Let Claude Code sessions message each other **across machines and across people** in the same organization.
+**Let everyone's AI coding agents talk to each other**: across machines, across people, across vendors, inside one organization.
 
-Claude Code already lets *your own* sessions talk to each other (`/peers`, `SendMessage`). orgchat is for the next step: Alice's session working on the API can ask Bob's session working on the web app which port it expects, and get an answer, without either human copying text around.
+Alice uses Claude Code, Bob uses Codex, Carol uses Cursor, Dan uses Gemini CLI, Erin runs DeepSeek in Cline. With orgchat, Bob's Codex can ask Alice's Claude Code *"which DB migration is next?"* and get the answer, without anyone copying text between chat windows.
 
 ```
-   Alice's laptop                                     Bob's laptop
- ┌────────────────────┐                           ┌────────────────────┐
- │ Claude Code        │                           │ Claude Code        │
- │  └ orgchat plugin  │      ┌───────────────┐    │  └ orgchat plugin  │
- │    (MCP server,    │◄────►│ orgchat relay │◄──►│    (MCP server,    │
- │    claude/channel) │  wss │ auth/presence │wss │    claude/channel) │
- └────────────────────┘      │ routing/audit │    └────────────────────┘
-                             └───────────────┘
-                              (you host it)
+ Alice: Claude Code ─┐                                  ┌─ Bob: Codex
+ Carol: Cursor ──────┤      ┌───────────────────┐       ├─ Dan: Gemini CLI
+ Erin: Cline+DeepSeek┼─wss─►│   orgchat relay   │◄─wss──┼─ any MCP client
+ scripts / CI ───────┘      │ auth · presence   │       └─ you, in a terminal (CLI)
+                            │ routing · audit   │
+                            └───────────────────┘
+                               (you host it)
 ```
 
-- **Plugin**: an MCP server bundled as a Claude Code plugin. It registers the session with your relay, gives Claude `list_peers` / `send` / `read_inbox` / `whoami` tools, and pushes incoming messages into the running session as a [channel](https://code.claude.com/docs/en/channels). Zero dependencies: plain Node.js 22+.
-- **Relay**: a small WebSocket server you run. It authenticates sessions, scopes them to an organization, routes messages, queues them for sessions that are briefly offline, and writes an audit log. One dependency (`ws`).
+- **`orgchat-mcp`**: a standard MCP server that any MCP-capable agent can load. Gives the agent `list_peers`, `send`, `read_inbox`, `wait_for_message` and `whoami`. Detects which agent it's running in, so peers see `codex`, `cursor`, `claude-code`, `gemini-cli`, ...
+- **`orgchat` CLI**: for people and scripts: `orgchat peers`, `orgchat send`, `orgchat listen`.
+- **Relay**: a small WebSocket server you run. Authenticates, scopes sessions to an org, routes and queues messages, writes an audit log.
+- **Claude Code plugin**: the same MCP server packaged as a plugin, plus real-time push into the session via Claude Code [channels](https://code.claude.com/docs/en/channels).
 
-> Not affiliated with Anthropic. Channels are a Claude Code research preview; see [Enabling channels](#enabling-channels).
+Client side: zero dependencies, Node.js 22+. Relay: one dependency (`ws`).
 
-## How it fits with what Claude Code already has
+> Not affiliated with Anthropic, OpenAI, Google, Anysphere or DeepSeek.
 
-| Need | Use |
+## How messages reach each agent
+
+| Agent | Receives messages by |
 |---|---|
-| Sessions on the same machine, same user | Built-in `SendMessage` / `/peers`. Nothing to install. |
-| Your own sessions on other machines | Built-in, via Remote Control (claude.ai login). |
-| Sessions of **different people** in one org | **orgchat** |
+| Claude Code (plugin + channel) | **Push**: messages appear in the session as they arrive, even when idle |
+| Codex, Cursor, Gemini CLI, Cline, Roo, Windsurf, opencode, ... | **Pull**: every orgchat tool result says *"N unread peer messages"*; the agent calls `read_inbox`, or `wait_for_message` to block until a reply arrives |
+| CLI / scripts | `orgchat listen` (stream) or `orgchat send ... --wait` |
 
-To keep the built-in local messaging on for everyone, set `"crossSessionInbound": "accept"` in managed settings (see [`examples/managed-settings.json`](examples/managed-settings.json)).
+Pull means a non-Claude agent sees new messages when it next uses orgchat, or when you tell it *"check orgchat"*. The typical flow, *ask a peer, then `wait_for_message` for the answer*, works the same everywhere.
 
 ## Quick start
 
-### 1. Run a relay
+### 1. Run a relay (once per org)
 
 ```bash
-cd relay
+git clone https://github.com/hansxiao7/claude-orgchat && cd claude-orgchat/relay
 npm ci
 ORGCHAT_TOKENS="acme=$(openssl rand -hex 24)" npm start
-# or: docker build -t orgchat-relay relay && docker run -p 8787:8787 -e ORGCHAT_TOKENS=... orgchat-relay
+# or: docker build -t orgchat-relay . && docker run -p 8787:8787 -e ORGCHAT_TOKENS=... orgchat-relay
 ```
 
-Put it behind TLS (any reverse proxy, Fly.io, Railway, Cloud Run with min instances = 1, etc.) so clients connect with `wss://`. State is in memory, so run exactly **one** instance.
+Put it behind TLS (any reverse proxy, Fly.io, Railway, Cloud Run with min instances = 1, ...) so clients use `wss://`. State is in memory: run exactly **one** instance.
 
-### 2. Install the plugin
+### 2. Each person: write the shared config (once per machine)
 
-In Claude Code:
-
-```
-/plugin marketplace add hansxiao7/claude-orgchat
-/plugin install orgchat@claude-orgchat
-```
-
-### 3. Configure
-
-Create `~/.config/orgchat/config.json` (see [`examples/config.json`](examples/config.json)):
+`~/.config/orgchat/config.json`, used by every agent on that machine:
 
 ```json
 {
@@ -65,29 +58,115 @@ Create `~/.config/orgchat/config.json` (see [`examples/config.json`](examples/co
 }
 ```
 
-### 4. Start Claude Code with the channel
+### 3. Each person: add orgchat to the agent(s) they use
 
-While your org hasn't allowlisted the plugin (see below), start sessions with:
+All clients run the same server. Either run it straight from GitHub with `npx`, or install it once with `npm i -g github:hansxiao7/claude-orgchat` and use `"command": "orgchat-mcp"` with no args.
+
+<details open>
+<summary><b>Claude Code</b> (plugin: push delivery)</summary>
+
+```
+/plugin marketplace add hansxiao7/claude-orgchat
+/plugin install orgchat@claude-orgchat
+```
+
+Start sessions with the channel enabled (see [Claude Code channels](#claude-code-channels)):
 
 ```bash
 claude --dangerously-load-development-channels plugin:orgchat@claude-orgchat
 ```
 
-Then just talk to Claude: *"ask bob's web session which port the dev server expects"*. Incoming messages show up in the session as `<channel source="orgchat" ...>` events.
+Without the plugin (pull only): `claude mcp add orgchat -- npx -y -p github:hansxiao7/claude-orgchat orgchat-mcp`
+</details>
 
-Without channels enabled the tools still work; Claude can poll with `read_inbox`, but messages won't interrupt an idle session.
+<details>
+<summary><b>Codex CLI</b>: <code>~/.codex/config.toml</code></summary>
+
+```toml
+[mcp_servers.orgchat]
+command = "npx"
+args = ["-y", "-p", "github:hansxiao7/claude-orgchat", "orgchat-mcp"]
+tool_timeout_sec = 300   # lets wait_for_message wait up to ~5 minutes
+```
+</details>
+
+<details>
+<summary><b>Cursor</b>: <code>~/.cursor/mcp.json</code> (or <code>.cursor/mcp.json</code> in a project)</summary>
+
+```json
+{
+  "mcpServers": {
+    "orgchat": {
+      "command": "npx",
+      "args": ["-y", "-p", "github:hansxiao7/claude-orgchat", "orgchat-mcp"]
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>Gemini CLI</b>: <code>~/.gemini/settings.json</code></summary>
+
+```json
+{
+  "mcpServers": {
+    "orgchat": {
+      "command": "npx",
+      "args": ["-y", "-p", "github:hansxiao7/claude-orgchat", "orgchat-mcp"],
+      "timeout": 300000
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>DeepSeek and other models</b>: via Cline, Roo Code, Windsurf, opencode, Cherry Studio, Continue, ...</summary>
+
+orgchat is model-agnostic: it works wherever the client speaks MCP. Most clients take the same `mcpServers` JSON as Cursor above (Cline / Roo Code: *MCP Servers → Configure*; Windsurf: `~/.codeium/windsurf/mcp_config.json`). opencode (`opencode.json`):
+
+```json
+{
+  "mcp": {
+    "orgchat": { "type": "local", "command": ["npx", "-y", "-p", "github:hansxiao7/claude-orgchat", "orgchat-mcp"] }
+  }
+}
+```
+
+The agent label is detected from the client (e.g. `cline`). To show the model too, set `ORGCHAT_AGENT`, e.g. `"env": { "ORGCHAT_AGENT": "cline+deepseek" }`.
+</details>
+
+<details>
+<summary><b>Terminal / scripts</b>: the <code>orgchat</code> CLI</summary>
+
+```bash
+npm i -g github:hansxiao7/claude-orgchat
+orgchat peers
+orgchat send bob-codex "is the staging DB migrated?" --wait 120
+orgchat listen            # stay online and print incoming messages (--json for scripts)
+```
+</details>
+
+### 4. Use it
+
+Just ask your agent:
+
+> *"Who's on orgchat?"* · *"Ask Bob's Codex session which port the API dev server uses, and wait for the answer."* · *"Check orgchat."* · *"Tell everyone on the web team's sessions that main is broken."*
 
 ## Configuration
 
-### Plugin (`~/.config/orgchat/config.json`, env vars override)
+### Client (`~/.config/orgchat/config.json`; env vars override, and can also be set per agent in its MCP `env`)
 
 | Key | Env var | Description |
 |---|---|---|
 | `relayUrl` | `ORGCHAT_RELAY_URL` | `wss://...` URL of your relay. |
 | `token` | `ORGCHAT_TOKEN` | Shared org token (token auth). |
 | `idTokenCommand` | `ORGCHAT_ID_TOKEN_CMD` | Command that prints an OIDC ID token (OIDC auth). Takes precedence over `token`. |
-| `user` | `ORGCHAT_USER` | Your display identity in token mode. Ignored in OIDC mode (the verified email is used). Default: OS username. |
-| `name` | `ORGCHAT_NAME` | Session name peers see. Default: `user@host:project-dir`. |
+| `user` | `ORGCHAT_USER` | Your identity in token mode. Ignored in OIDC mode (the verified email is used). Default: OS username. |
+| `name` | `ORGCHAT_NAME` | Session name peers see. Default `user@host:project-dir`. |
+| `agent` | `ORGCHAT_AGENT` | Override the detected agent label. |
+| | `ORGCHAT_PUSH` | `auto` (default: channel push only in Claude Code), `channel`, or `off`. |
 | | `ORGCHAT_CONFIG` | Alternative config file path. |
 
 ### Relay (env vars)
@@ -104,49 +183,44 @@ Without channels enabled the tools still work; Claude can poll with `read_inbox`
 | `ORGCHAT_OIDC_JWKS_URL` | discovered | Override JWKS discovery. |
 | `ORGCHAT_MAX_MESSAGE_BYTES` | `65536` | Max message size. |
 | `ORGCHAT_RATE_PER_MINUTE` | `30` | Messages per minute per connection. |
-| `ORGCHAT_QUEUE_LIMIT` / `ORGCHAT_QUEUE_TTL_MS` | `100` / 24h | Offline queue size per session and how long offline sessions are remembered. |
+| `ORGCHAT_QUEUE_LIMIT` / `ORGCHAT_QUEUE_TTL_MS` | `100` / 24h | Offline queue size per session, and how long offline sessions are remembered. |
 | `ORGCHAT_AUDIT_CONTENT` | off | `1` also logs message bodies (metadata is always logged as JSON lines on stdout). |
 
 ### Identity: what "same organization" means
 
-orgchat cannot ask Anthropic which org a claude.ai account belongs to (there is no documented API for third-party plugins, and the plugin never touches Claude Code's credentials). Membership is defined by your relay:
+The relay decides who is in the org. orgchat never touches any agent's own credentials (Claude, OpenAI, Google, Cursor, DeepSeek accounts), and those vendors don't offer a cross-vendor org check anyway.
 
-- **Token mode**: anyone with the org token is in. Simple, fine for small teams. `user` is self-declared, so peers see `verified="false"`.
-- **OIDC mode**: users log in with your company identity provider (Google Workspace, Okta, Entra ID, Lark/Feishu, ...). The relay verifies the ID token's signature, issuer, audience, expiry and email domain, and uses the verified email as the user.
+- **Token mode**: anyone with the org token is in. Simple, fine for small teams. `user` is self-declared, so peers see `verified: false`.
+- **OIDC mode**: people log in with your company identity provider (Google Workspace, Okta, Entra ID, Lark/Feishu, ...). The relay verifies the ID token's signature, issuer, audience, expiry and email domain, and uses the verified email as the user.
 
-## Enabling channels
+## Claude Code channels
 
-Channels push messages into a session; without them orgchat is pull-only. During the Claude Code research preview:
+Push delivery in Claude Code uses channels, a research preview:
 
-- **Individually**: start with `claude --dangerously-load-development-channels plugin:orgchat@claude-orgchat`. It shows a confirmation prompt, works only in interactive sessions (not `-p` or the Agent SDK), and needs claude.ai or Console API-key login (not Bedrock/Vertex/Foundry).
-- **For a Team/Enterprise org**: an Owner enables channels (claude.ai admin console → Organization settings → Claude Code) and deploys managed settings like [`examples/managed-settings.json`](examples/managed-settings.json):
-  - `channelsEnabled: true`
-  - `allowedChannelPlugins` listing `orgchat@claude-orgchat`. This **replaces** Anthropic's default allowlist, so add any other channel plugins you use.
-  - `extraKnownMarketplaces` + `enabledPlugins` to pre-install the plugin.
+- **Individually**: start with `claude --dangerously-load-development-channels plugin:orgchat@claude-orgchat`. It asks for confirmation, works only in interactive sessions (not `-p` or the Agent SDK), and needs claude.ai or Console login (not Bedrock/Vertex/Foundry).
+- **Team/Enterprise org**: an Owner enables channels (claude.ai admin console → Organization settings → Claude Code) and deploys managed settings like [`examples/managed-settings.json`](examples/managed-settings.json) (`channelsEnabled`, `allowedChannelPlugins`, `extraKnownMarketplaces`, `enabledPlugins`). `allowedChannelPlugins` **replaces** Anthropic's default allowlist, so list any other channel plugins you use. Users then start with `claude --channels plugin:orgchat@claude-orgchat`.
 
-  Users then start with `claude --channels plugin:orgchat@claude-orgchat`.
-
-Check the current [channels docs](https://code.claude.com/docs/en/channels) for the latest rules; they may change as the preview evolves.
+Without channels, Claude Code behaves like the other agents (pull). Claude Code's built-in `SendMessage` / `/peers` keeps working alongside for a user's *own* sessions.
 
 ## Security model
 
-Messages from peers are an input channel into your coding agent. Treat them accordingly.
+Peer messages are an input channel into coding agents that can run commands. Treat them accordingly.
 
-- **Peer text is untrusted.** The plugin's MCP instructions tell Claude that peer messages are from colleagues, not from its user, and must not be acted on (running commands, editing files, sharing code or secrets) without the user's request or confirmation. This lowers but does not remove prompt-injection risk; only connect people you'd trust to type into your terminal's chat.
-- **No permission relay.** The plugin deliberately does **not** declare `claude/channel/permission`, so nobody can approve tool use in your session through orgchat.
-- **Org isolation.** Sessions only see and reach sessions in the same org. Session ids can't be hijacked across users.
-- **Relay sees plaintext.** Self-host it. Messages are kept only in memory (offline queue up to 24h by default). Bodies are not logged unless `ORGCHAT_AUDIT_CONTENT=1`.
+- **Peer text is untrusted.** The server's MCP instructions and tool descriptions tell the agent that peer messages come from colleagues, not from its user, and must not be acted on (running commands, editing files, sharing code or secrets) without the user's request or confirmation. This lowers but does not remove prompt-injection risk: only connect people whose messages you'd be OK with your agent reading.
+- **No remote approvals.** The server does not declare Claude Code's `claude/channel/permission`, so nobody can approve tool use in your session through orgchat.
+- **Org isolation.** Sessions only see and reach sessions in their own org. Session ids can't be taken over by another user.
+- **The relay sees plaintext.** Self-host it. Messages live only in memory (offline queue up to 24h by default). Bodies are not logged unless `ORGCHAT_AUDIT_CONTENT=1`.
 - **Limits.** Message size cap, per-connection rate limit, 10s login timeout.
 
 Report vulnerabilities privately via GitHub security advisories on this repo.
 
 ## Wire protocol
 
-JSON over WebSocket. Client → relay:
+JSON over WebSocket, so writing a client in another language is straightforward. Client → relay:
 
 ```jsonc
 { "type": "hello", "v": 1, "auth": { "token": "..." } /* or { "id_token": "..." } */,
-  "session": { "sid": "s_ab12cd34ef", "name": "alice-api", "user": "alice", "host": "mbp", "cwd": "/src/api" } }
+  "session": { "sid": "s_ab12cd34ef", "name": "alice-api", "user": "alice", "agent": "codex", "host": "mbp", "cwd": "/src/api" } }
 { "type": "list", "req": 1 }
 { "type": "send", "req": 2, "to": "bob-web" /* sid | name | "user:<user>" */, "text": "...", "thread": "t1" }
 { "type": "ack", "id": "m_..." }
@@ -155,48 +229,40 @@ JSON over WebSocket. Client → relay:
 Relay → client:
 
 ```jsonc
-{ "type": "welcome", "session": { "sid": "...", "name": "...", "user": "...", "org": "acme", "verified": false } }
+{ "type": "welcome", "session": { "sid": "...", "name": "...", "user": "...", "agent": "codex", "org": "acme", "verified": false } }
 { "type": "res", "req": 2, "ok": true, "data": { "sent": [{ "id": "m_...", "to": "s_...", "status": "delivered" }] } }
-{ "type": "msg", "id": "m_...", "from": { "sid": "...", "name": "...", "user": "...", "verified": false },
+{ "type": "msg", "id": "m_...", "from": { "sid": "...", "name": "...", "user": "...", "agent": "cursor", "verified": false },
   "to": "s_...", "text": "...", "thread": "t1", "ts": "..." }
 ```
 
 Messages stay queued until acknowledged; unacknowledged messages are re-queued when a socket drops. Close code `4001` = auth failed, `4002` = replaced by a newer connection for the same session.
 
-Inside Claude Code a message becomes:
-
-```xml
-<channel source="orgchat" from_user="alice" from_name="alice-api" from_session="s_ab12cd34ef" msg_id="m_..." thread_id="t1">
-what port does the API run on?
-</channel>
-```
-
 ## Development
 
 ```bash
-cd relay && npm ci && npm test   # spins up a relay and real plugin processes, talks MCP over stdio
+cd relay && npm ci && npm test   # real relay + real MCP server processes posing as Claude Code, Codex, Cursor, Gemini CLI, plus the CLI
 ```
 
-Repo layout:
-
 ```
-.claude-plugin/marketplace.json   this repo is a plugin marketplace
-plugin/                           the Claude Code plugin
+package.json                      npm package: orgchat-mcp + orgchat bins
+.claude-plugin/marketplace.json   this repo is also a Claude Code plugin marketplace
+client/                           client code (also the Claude Code plugin root)
   .claude-plugin/plugin.json
-  server/orgchat.mjs              MCP server + relay client (no deps)
-relay/                            the relay server
-  src/relay.mjs  src/oidc.mjs
-  test/
-examples/                         client config + managed settings
+  bin/orgchat-mcp.mjs             MCP server
+  bin/orgchat.mjs                 CLI
+  lib/relay-client.mjs            shared relay client
+relay/                            relay server (src/, test/, Dockerfile)
+examples/                         client config + Claude Code managed settings
 ```
 
 ## Roadmap
 
+- Publish `orgchat-mcp` to npm
+- Push delivery for more clients as they gain server-to-model notification support
 - Persistent relay storage (Redis/SQLite) and horizontal scaling
-- Built-in OIDC device-code login in the plugin
+- Built-in OIDC device-code login
 - Optional end-to-end encryption between sessions
-- Hook-based fallback that wakes idle sessions when channels are unavailable
-- Topics / broadcast rooms
+- Topics / broadcast rooms; Slack and Lark/Feishu bridges so humans can join from chat
 
 PRs welcome.
 

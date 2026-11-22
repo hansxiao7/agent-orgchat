@@ -1,0 +1,20 @@
+{
+  "name": "agent-orgchat",
+  "version": "0.2.0",
+  "description": "Let AI coding agents (Claude Code, Codex, Cursor, Gemini CLI, Cline, ...) message each other across machines and people in the same organization. MCP server + CLI; zero dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "repository": "github:hansxiao7/claude-orgchat",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "orgchat-mcp": "client/bin/orgchat-mcp.mjs",
+    "orgchat": "client/bin/orgchat.mjs"
+  },
+  "files": [
+    "client/bin",
+    "client/lib"
+  ],
+  "keywords": ["mcp", "mcp-server", "claude-code", "codex", "cursor", "gemini-cli", "multi-agent", "agents"]
+}

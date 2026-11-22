@@ -1,5 +1,5 @@
-// orgchat relay: routes plain-text messages between Claude Code sessions that
-// belong to the same organization. State is in memory: run one instance.
+// orgchat relay: routes plain-text messages between AI agent sessions (any
+// MCP-capable agent, the CLI, scripts) that belong to the same organization. State is in memory: run one instance.
 
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -92,7 +92,7 @@ export function createRelay(cfg) {
   }
 
   function publicInfo(s) {
-    return { sid: s.sid, name: s.name, user: s.user, host: s.host, cwd: s.cwd, since: s.connectedAt };
+    return { sid: s.sid, name: s.name, user: s.user, agent: s.agent, host: s.host, cwd: s.cwd, since: s.connectedAt };
   }
 
   function deliver(session, msg) {
@@ -164,6 +164,7 @@ export function createRelay(cfg) {
             user: who.user,
             verified: who.verified,
             name: clean(s.name, 96) || s.sid,
+            agent: clean(s.agent, 40) || 'unknown',
             host: clean(s.host, 64),
             cwd: clean(s.cwd, 256),
             client: clean(s.client, 64),
@@ -177,7 +178,7 @@ export function createRelay(cfg) {
           return ws.close(4001, clean(err.message, 120));
         }
         send(ws, { type: 'welcome', session: { ...publicInfo(session), org: session.org, verified: session.verified } });
-        log({ event: 'connect', org: session.org, user: session.user, sid: session.sid, name: session.name, remote });
+        log({ event: 'connect', org: session.org, user: session.user, agent: session.agent, sid: session.sid, name: session.name, remote });
         for (const queued of session.queue.splice(0)) deliver(session, queued);
         return;
       }
@@ -213,7 +214,7 @@ export function createRelay(cfg) {
           const results = targets.map((t) => {
             const out = {
               id: 'm_' + crypto.randomBytes(8).toString('hex'),
-              from: { sid: session.sid, name: session.name, user: session.user, verified: session.verified },
+              from: { sid: session.sid, name: session.name, user: session.user, agent: session.agent, verified: session.verified },
               to: t.sid,
               text,
               ...(msg.thread ? { thread: clean(msg.thread, 64) } : {}),
