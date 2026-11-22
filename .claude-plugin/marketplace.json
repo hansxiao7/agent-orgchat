@@ -1,0 +1,16 @@
+{
+  "name": "claude-orgchat",
+  "owner": { "name": "hansxiao7", "url": "https://github.com/hansxiao7" },
+  "metadata": {
+    "description": "Cross-machine, cross-user messaging between Claude Code sessions in one organization."
+  },
+  "plugins": [
+    {
+      "name": "orgchat",
+      "source": "./plugin",
+      "description": "Let Claude Code sessions message each other across machines and users in the same organization, via a self-hosted relay.",
+      "version": "0.1.0",
+      "license": "MIT"
+    }
+  ]
+}

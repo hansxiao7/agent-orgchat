@@ -1,0 +1,5 @@
+{
+  "relayUrl": "wss://orgchat.example.com",
+  "token": "replace-with-your-org-token",
+  "name": "alice-api"
+}

@@ -1,0 +1,15 @@
+{
+  "channelsEnabled": true,
+  "allowedChannelPlugins": [
+    { "marketplace": "claude-orgchat", "plugin": "orgchat" }
+  ],
+  "extraKnownMarketplaces": {
+    "claude-orgchat": {
+      "source": { "source": "github", "repo": "hansxiao7/claude-orgchat" }
+    }
+  },
+  "enabledPlugins": {
+    "orgchat@claude-orgchat": true
+  },
+  "crossSessionInbound": "accept"
+}

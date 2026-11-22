@@ -1,0 +1,19 @@
+{
+  "name": "orgchat-relay",
+  "version": "0.1.0",
+  "description": "Relay server for claude-orgchat: routes messages between Claude Code sessions in the same organization.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.23.0"
+  }
+}
