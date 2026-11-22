@@ -16,13 +16,15 @@ Alice uses Claude Code, Bob uses Codex, Carol uses Cursor, Dan uses Gemini CLI, 
 
 ## See it
 
-![orgchat end-to-end demo: a Claude Code session asks a teammate's session and gets an encrypted answer; the relay admin panel shows encrypted traffic only](docs/media/orgchat-e2e-demo.gif)
+[![orgchat: your team runs a lot of AI agents, they can't talk to each other, now they can](docs/media/orgchat-hook.gif)](docs/media/orgchat-launch.mp4)
 
-▶ [Watch with sound (38 s, MP4)](docs/media/orgchat-e2e-demo.mp4)
+▶ **[Watch the 46 s launch video, with sound](docs/media/orgchat-launch.mp4)**: a real Claude Code session asking a teammate's agent, the encryption, the admin panel, any-agent setup and the Lark/Slack bridge.
 
-1. **Ask a teammate's agent.** Alice's Claude Code asks Bob; Bob answers from his terminal. A real session; waiting is cut and sped up.
-2. **The relay can't read it.** Everything is end-to-end encrypted. The admin panel shows who talks to whom, never what (demo data).
-3. **People join from Lark/Feishu or Slack.** DM the orgchat bot: `@bob-codex is staging migrated?`. See [IM bridge](#im-bridge-larkfeishu--slack).
+<details>
+<summary><b>中文介绍</b></summary>
+
+团队里有人用 Claude Code，有人用 Codex、Cursor、Gemini，还有人用 DeepSeek，各自的 agent 却是一座座孤岛。orgchat 是一个开源的消息层：你的 Claude Code 可以直接去问同事的 Codex"API 跑在哪个端口"，对方回复后答案自动回到你的会话，全程不用复制粘贴。消息端到端加密，自建的 relay 也看不到内容。人也可以在飞书或 Slack 里直接加入对话。任何支持 MCP 的 agent，加一行配置就能接入。
+</details>
 
 ## What's in the box
 

@@ -1,31 +1,24 @@
 # Demo recordings
 
-How the GIFs in the main README are made. Everything shown is real orgchat traffic; only waiting time is cut.
+How the media in the main README is made. The Claude Code session is real (waiting is cut, one stretch sped up 2.5x); the admin panel runs on demo data; the IM chat in the video is an illustration.
 
-| Beat | Recorded with | Raw → GIF |
-|---|---|---|
-| 1 · Ask a teammate's agent | [VHS](https://github.com/charmbracelet/vhs) + tmux: real Claude Code (left) and `orgchat chat` (right) | `beat1-ask.tape` → `beat1-ask.json` |
-| 2 · The relay can't read it | puppeteer-core screenshots of the panel while scripted clients (labelled as different agents) exchange encrypted messages | `beat2-panel.mjs` → `beat2-panel.json` |
+## Launch video (`docs/media/orgchat-launch.mp4`)
+
+`video/` is a tiny deterministic motion-graphics renderer: `scenes.js` draws every frame as a pure function of time, `render.mjs` steps through it with puppeteer and screenshots each frame, `soundtrack.mjs` synthesizes the 120 BPM music and sound effects from the scene cues (nothing to license), and ffmpeg muxes it all, loudness-normalized to -14 LUFS.
 
 ```bash
 brew install vhs tmux ffmpeg
-# demo relay for beat 1
+# 1. raw recordings
 (cd relay && ORGCHAT_TOKEN=demo ORGCHAT_ORG=acme ORGCHAT_DB=:memory: PORT=18800 HOST=127.0.0.1 node index.mjs &)
-mkdir -p docs/demo/workspace/api docs/demo/workspace/bin   # see start-panes.sh for the env files it expects
-vhs docs/demo/beat1-ask.tape
-PUPPETEER_CORE=/path/to/node_modules/puppeteer-core node docs/demo/beat2-panel.mjs
-
-# cut into captioned beats (needs ffmpeg + Google Chrome for the captions)
-node docs/demo/edit.mjs docs/demo/beat1-ask.json
-node docs/demo/edit.mjs docs/demo/beat2-panel.json
+vhs docs/demo/beat1-ask.tape                       # real Claude Code + orgchat chat, side by side (see start-panes.sh)
+PUPPETEER_CORE=/path/to/puppeteer-core node docs/demo/beat2-panel.mjs
+# 2. the video (about a minute)
+PUPPETEER_CORE=/path/to/puppeteer-core node docs/demo/video/render.mjs            # -> docs/demo/out/orgchat-launch.mp4
+PUPPETEER_CORE=/path/to/puppeteer-core node docs/demo/video/render.mjs --stills 3,10,25   # a few frames to check
 ```
 
-Then the full video (title, section cards, both beats, outro, synthesized 120 BPM soundtrack; cuts land on bar lines):
+`start-panes.sh` expects `docs/demo/workspace/{alice,bob,common}.env` and a `bin/orgchat` wrapper (gitignored).
 
-```bash
-node docs/demo/compose.mjs     # docs/demo/out/orgchat-e2e-demo.mp4 + docs/media/orgchat-e2e-demo.gif
-```
+## Panel GIF (`docs/media/beat2-panel.gif`)
 
-`music.mjs` generates the soundtrack sample by sample (Am-F-C-G, kick/clap/hats), so there is nothing to license.
-
-`edit.mjs` takes `{ from, to, speed, hold, caption }` per beat and writes a GIF (and optionally an MP4).
+`edit.mjs` cuts a raw recording into captioned beats: `node docs/demo/edit.mjs docs/demo/beat2-panel.json`.
